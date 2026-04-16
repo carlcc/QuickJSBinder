@@ -1,0 +1,14 @@
+# Xmake cache
+/.xmake/
+/build/
+/.vscode
+/deps
+
+# MacOS Cache
+.DS_Store
+
+# Build-generated native plugin (copied by xmake after_build)
+examples/native_scripts/native_plugin.so
+
+# Doxygen generated API docs
+/docs/api/
