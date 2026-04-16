@@ -31,7 +31,7 @@ int main() {
             os.setTimeout(() => globalThis.__order.push('timer1'), 10);
             os.setTimeout(() => globalThis.__order.push('timer2'), 20);
             os.setTimeout(() => globalThis.__order.push('timer3'), 30);
-        )", "<test1_setup>");
+        )", nullptr, "<test1_setup>");
         (void)mod;
 
         // Drive the event loop — processes all timers until done
@@ -71,7 +71,7 @@ int main() {
             globalThis.delayedValue = (val, ms) => new Promise(resolve => {
                 os.setTimeout(() => resolve(val), ms);
             });
-        )", "<test3_setup>");
+        )", nullptr, "<test3_setup>");
         (void)setup;
         ctx.loop();
 
@@ -96,7 +96,7 @@ int main() {
             globalThis.__loopOnceCounter = 0;
             os.setTimeout(() => { globalThis.__loopOnceCounter++; }, 10);
             os.setTimeout(() => { globalThis.__loopOnceCounter++; }, 20);
-        )", "<test4_setup>");
+        )", nullptr, "<test4_setup>");
         (void)setup;
 
         // Simulate a game-engine-style loop:
@@ -131,7 +131,7 @@ int main() {
             os.setTimeout(() => {
                 globalThis.__pollDone = true;
             }, 30);
-        )", "<test5_setup>");
+        )", nullptr, "<test5_setup>");
         (void)setup;
 
         // Poll with short timeout, then check for completion

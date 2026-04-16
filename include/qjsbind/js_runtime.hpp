@@ -81,6 +81,8 @@ public:
      * - The standard module normalizer/loader (file-based).
      * - The std event handlers required for promises/async modules.
      *
+     * @param custom_module_loader Your specified module loader
+     *
      * @code
      * JsRuntime rt;
      * rt.enableModuleLoader();   // call once, before creating contexts
@@ -91,10 +93,13 @@ public:
      *
      * @note This is idempotent — calling it multiple times is safe.
      */
-    void enableModuleLoader() {
+    void enableModuleLoader(decltype(js_module_loader) custom_module_loader = nullptr) {
         if (!module_loader_enabled_) {
+            if (custom_module_loader == nullptr) {
+                custom_module_loader = js_module_loader;
+            }
             js_std_init_handlers(rt_);
-            JS_SetModuleLoaderFunc2(rt_, nullptr, js_module_loader, nullptr, nullptr);
+            JS_SetModuleLoaderFunc2(rt_, nullptr, custom_module_loader, nullptr, nullptr);
             module_loader_enabled_ = true;
         }
     }

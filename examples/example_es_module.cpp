@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
         print("inline module: add(PI, 1) = " + add(PI, 1));
     )";
     // Note: evalModule needs a meaningful filename for import resolution.
-    JsValue result2 = ctx.evalModule(inlineModule,
+    JsValue result2 = ctx.evalModule(inlineModule, nullptr,
                                       (scriptDir + "/<inline>").c_str());
     if (result2.isException()) {
         JsValue exc = JsValue::adopt(ctx, JS_GetException(ctx));

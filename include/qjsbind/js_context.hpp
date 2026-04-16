@@ -93,6 +93,11 @@ public:
         return JsValue::adopt(ctx_, JS_GetGlobalObject(ctx_));
     }
 
+    [[nodiscard]] JsValue getExceptionMessage() const
+    {
+        return JsValue::adopt(ctx_, JS_GetException(ctx_));
+    }
+
     /**
      * @brief Access a global property via proxy, enabling sol2-like syntax.
      *
@@ -201,7 +206,7 @@ public:
      *         top-level await, returns an **unsettled Promise**. Returns an
      *         exception marker on error.
      */
-    [[nodiscard]] JsValue evalFile(const char* filename) const {
+    [[nodiscard]] JsValue evalFile(const char* filename, JsValue* moduleValue = nullptr) const {
         // Read file contents.
         std::ifstream ifs(filename);
         if (!ifs.is_open()) {
@@ -228,8 +233,12 @@ public:
             // Set import.meta (url, etc.).
             js_module_set_import_meta(ctx_, compiled, true, true);
 
+            if (moduleValue != nullptr) {
+                *moduleValue = JsValue::dup(ctx_, compiled);
+            }
             // Evaluate (resolve + execute) the module.
             JSValue result = JS_EvalFunction(ctx_, compiled);
+            result = js_std_await(ctx_, result);
             // compiled is consumed by JS_EvalFunction, no need to free.
             return JsValue::adopt(ctx_, result);
         } else {
@@ -251,7 +260,7 @@ public:
      *         top-level await, returns an unsettled Promise. Returns an
      *         exception marker on error.
      */
-    [[nodiscard]] JsValue evalModule(const char* code, const char* filename = "<module>") const {
+    [[nodiscard]] JsValue evalModule(const char* code, JsValue* moduleValue, const char* filename = "<module>") const {
         size_t len = strlen(code);
         JSValue compiled = JS_Eval(ctx_, code, len, filename,
                                    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
@@ -260,8 +269,28 @@ public:
         }
         js_module_set_import_meta(ctx_, compiled, true,
                                   true /* is_main */);
+        if (moduleValue != nullptr) {
+            *moduleValue = JsValue::dup(ctx_, compiled);
+        }
         JSValue result = JS_EvalFunction(ctx_, compiled);
+        result = js_std_await(ctx_, result);
         return JsValue::adopt(ctx_, result);
+    }
+
+    [[nodiscard]] JsValue evalModuleFile(const char* filename, JsValue* moduleValue = nullptr)
+    {
+        std::string code;
+        {
+            std::ifstream ifs(filename);
+            if (!ifs.is_open()) {
+                JS_ThrowReferenceError(ctx_, "could not open file: %s", filename);
+                return JsValue::adopt(ctx_, JS_EXCEPTION);
+            }
+            std::ostringstream oss;
+            oss << ifs.rdbuf();
+            code = oss.str();
+        }
+        return evalModule(code.c_str(), moduleValue, filename);
     }
 
     // -----------------------------------------------------------------------
@@ -344,10 +373,15 @@ public:
         return *this;
     }
 
+    JsContext& addHelpers(int argc, char** argv) {
+        js_std_add_helpers(ctx_, 0, argv);
+        return *this;
+    }
+
     /**
-     * @brief Register all QuickJS built-in modules (std, os, bjson).
+     * @brief Register all QuickJS built-in modules (std, os, bjson) and helpers.
      *
-     * Convenience method that registers all three built-in modules at once.
+     * Convenience method that registers all three built-in modules and helpers at once.
      * Also installs the standard helpers (console.log, print, etc.) for
      * compatibility with the QuickJS REPL environment.
      *
@@ -364,17 +398,15 @@ public:
      * )");
      * @endcode
      *
-     * @param helpers If true (default), also call js_std_add_helpers which
-     *                adds `print`, `console.log`, and other convenience globals.
+     * @param argc the command line args count
+     * @param argv the command line args
      * @return Reference to this JsContext for chaining.
      */
-    JsContext& addBuiltinModules(bool helpers = true) {
+    JsContext& addBuiltinModules(int argc = 0, char** argv = nullptr) {
         addStdModule();
         addOsModule();
         addBjsonModule();
-        if (helpers) {
-            js_std_add_helpers(ctx_, 0, nullptr);
-        }
+        addHelpers(argc, argv);
         return *this;
     }
 
@@ -571,7 +603,7 @@ public:
      *
      * @see loop(), loopOnce()
      */
-    [[nodiscard]] JsValue await(JsValue val) const {
+    JsValue await(JsValue val) const {
         JSValue result = js_std_await(ctx_, val.release());
         return JsValue::adopt(ctx_, result);
     }

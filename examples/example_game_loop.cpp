@@ -46,7 +46,7 @@ int main() {
         console.log('Game initialized:', JSON.stringify(config));
         globalThis.gameConfig = config;
         globalThis.gameReady  = true;
-    )", "<game_init>");
+    )", nullptr, "<game_init>");
 
     if (result.isException()) {
         ctx.dumpError();

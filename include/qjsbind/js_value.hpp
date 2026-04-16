@@ -19,7 +19,7 @@
 #include <utility>
 
 extern "C" {
-#include "quickjs.h"
+#include <quickjs.h>
 }
 
 namespace qjsbind {
@@ -184,6 +184,9 @@ public:
     /** @brief True if the value is an array. */
     [[nodiscard]] bool isArray() const noexcept { return JS_IsArray(val_); }
 
+    /** @brief True if the value is a module. */
+    [[nodiscard]] bool isModule() const { return JS_IsModule(val_); }
+
     /** @brief True if the value is an exception marker. */
     [[nodiscard]] bool isException() const noexcept { return JS_IsException(val_); }
 
@@ -258,6 +261,27 @@ public:
     // Object property access (convenience)
     // -----------------------------------------------------------------------
 
+    [[nodiscard]] std::vector<std::string> getPropertyNames() const
+    {
+        std::vector<std::string> result;
+
+        JSPropertyEnum* tab_atom = nullptr;
+        uint32_t tab_atom_count = 0;
+
+        JS_GetOwnPropertyNames(ctx_, &tab_atom, &tab_atom_count,
+            val_,
+            JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY);
+
+        for (uint32_t i = 0; i < tab_atom_count; ++i) {
+            auto* s = JS_AtomToCString(ctx_, tab_atom[i].atom);
+            result.push_back(s);
+            JS_FreeCString(ctx_, s);
+        }
+
+        JS_FreePropertyEnum(ctx_, tab_atom, tab_atom_count);
+        return result;
+    }
+
     /**
      * @brief Get a property by name.
      * @param name Property name (ASCII/UTF-8).
@@ -283,7 +307,14 @@ public:
      * @return JsValue wrapping the element (owned).
      */
     [[nodiscard]] JsValue getPropertyUint32(uint32_t idx) const {
-        return JsValue::adopt(ctx_, JS_GetPropertyUint32(ctx_, val_, idx));
+        return adopt(ctx_, JS_GetPropertyUint32(ctx_, val_, idx));
+    }
+
+    [[nodiscard]] JsValue getModuleNamespace() const
+    {
+        assert(isModule());
+        auto* def = static_cast<JSModuleDef*>(JS_VALUE_GET_PTR(val_));
+        return adopt(ctx_, JS_GetModuleNamespace(ctx_, def));
     }
 
     // -----------------------------------------------------------------------
