@@ -257,6 +257,11 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::string toExceptionString() const {
+        assert(isException());
+        return _jsDumpError(ctx_, val_);
+    }
+
     // -----------------------------------------------------------------------
     // Object property access (convenience)
     // -----------------------------------------------------------------------
@@ -340,6 +345,39 @@ public:
      * @note Defined after JsProxy is fully declared (in js_proxy.hpp).
      */
     inline JsProxy operator[](const char* key) const;
+
+private:
+    static std::string _jsDumpObject(::JSContext* ctx, JSValueConst exception_val)
+    {
+        std::string ret;
+        size_t len { 0 };
+        auto* str = JS_ToCStringLen(ctx, &len, exception_val);
+        if (str != nullptr) {
+            ret = std::string(str, len);
+            JS_FreeCString(ctx, str);
+        } else {
+            ret = "[exception]";
+        }
+        return ret;
+    }
+
+    static std::string _jsDumpError(::JSContext* ctx, JSValueConst exception_val)
+    {
+        bool is_error = JS_IsError(exception_val);
+        std::string errorString = _jsDumpObject(ctx, exception_val);
+
+        JSValue val;
+        if (is_error) {
+            val = JS_GetPropertyStr(ctx, exception_val, "stack");
+        } else {
+            js_std_cmd(/*ErrorBackTrace*/ 2, ctx, &val);
+        }
+        if (!JS_IsUndefined(val)) {
+            errorString += _jsDumpObject(ctx, val);
+            JS_FreeValue(ctx, val);
+        }
+        return errorString;
+    }
 
 private:
     JSContext* ctx_;
