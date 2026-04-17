@@ -96,6 +96,10 @@ public:
         return JsValue::adopt(ctx_, JS_GetException(ctx_));
     }
 
+    [[nodiscard]] std::string getExceptionMessageStr() const {
+        return getExceptionMessage().toString();
+    }
+
     /**
      * @brief Access a global property via proxy, enabling sol2-like syntax.
      *

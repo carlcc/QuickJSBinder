@@ -3,6 +3,8 @@
 /build/
 /.vscode
 /deps
+/cmake-build-*
+/.idea
 
 # MacOS Cache
 .DS_Store
