@@ -492,12 +492,166 @@ JSValue wrapMethod(JSContext* ctx, const char* name, F&& fn, JSClassID class_id)
 // OverloadResolver — runtime dispatch across multiple callables
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// Compile-time → runtime JS type matching
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
+/// Check if a JS value is compatible with C++ type T.
+/// Default: accept anything (for types without a clear JS tag).
+template <typename T, typename Enable = void>
+struct JsTypeMatcher {
+    static bool match(JSContext*, JSValueConst value) { return JS_GetClassID(value) == ClassRegistry::classId<T>(); }
+};
+
+template <typename T>
+struct JsTypeMatcher<T*> {
+    static bool match(JSContext*, JSValueConst value) { return JS_GetClassID(value) == ClassRegistry::classId<T>() || JS_IsNull(value);; }
+};
+
+/// bool — JS_TAG_BOOL
+template <>
+struct JsTypeMatcher<bool> {
+    static bool match(JSContext*, JSValueConst v) { return JS_IsBool(v); }
+};
+
+/// Integer types (≤32-bit signed) — JS_TAG_INT or number without fractional part.
+template <typename T>
+struct JsTypeMatcher<T, std::enable_if_t<
+    std::is_integral_v<T> && !std::is_same_v<T, bool> && (sizeof(T) <= 4)>> {
+    static bool match(JSContext*, JSValueConst v) {
+        return JS_IsNumber(v) && !JS_IsBool(v);
+    }
+};
+
+/// 64-bit integers — also accept BigInt.
+template <typename T>
+struct JsTypeMatcher<T, std::enable_if_t<
+    std::is_integral_v<T> && !std::is_same_v<T, bool> && (sizeof(T) > 4)>> {
+    static bool match(JSContext*, JSValueConst v) {
+        return JS_IsNumber(v) || JS_IsBigInt(v);
+    }
+};
+
+/// Floating point — any JS number.
+template <typename T>
+struct JsTypeMatcher<T, std::enable_if_t<std::is_floating_point_v<T>>> {
+    static bool match(JSContext*, JSValueConst v) {
+        return JS_IsNumber(v);
+    }
+};
+
+/// std::string — JS string.
+template <>
+struct JsTypeMatcher<std::string> {
+    static bool match(JSContext*, JSValueConst v) { return JS_IsString(v); }
+};
+
+/// const char* — JS string.
+template <>
+struct JsTypeMatcher<const char*> {
+    static bool match(JSContext*, JSValueConst v) { return JS_IsString(v); }
+};
+
+/// Enum types — same as their underlying integer.
+template <typename T>
+struct JsTypeMatcher<T, std::enable_if_t<std::is_enum_v<T>>> {
+    static bool match(JSContext* ctx, JSValueConst v) {
+        return JsTypeMatcher<std::underlying_type_t<T>>::match(ctx, v);
+    }
+};
+
+/// std::function<...> — JS function.
+template <typename R, typename... A>
+struct JsTypeMatcher<std::function<R(A...)>> {
+    static bool match(JSContext* ctx, JSValueConst v) {
+        return JS_IsFunction(ctx, v);
+    }
+};
+
+/// JsValue / JSValue — accept anything.
+template <>
+struct JsTypeMatcher<JsValue> {
+    static bool match(JSContext*, JSValueConst) { return true; }
+};
+template <>
+struct JsTypeMatcher<JSValue> {
+    static bool match(JSContext*, JSValueConst) { return true; }
+};
+
+/// std::vector<T> — JS array.
+template <typename T>
+struct JsTypeMatcher<std::vector<T>> {
+    static bool match(JSContext*, JSValueConst v) { return JS_IsArray(v); }
+};
+
+/// std::optional<T> — match inner type, or undefined/null.
+template <typename T>
+struct JsTypeMatcher<std::optional<T>> {
+    static bool match(JSContext* ctx, JSValueConst v) {
+        return JS_IsUndefined(v) || JS_IsNull(v) ||
+               JsTypeMatcher<T>::match(ctx, v);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Build a type_check function from an ArgsTuple at compile time.
+// ---------------------------------------------------------------------------
+
+/// Check all argv[0..N) against their corresponding C++ parameter types.
+template <typename ArgsTuple, size_t... Is>
+bool matchArgTypes(JSContext* ctx, int argc, JSValueConst* argv,
+                   std::index_sequence<Is...>) {
+    constexpr int N = static_cast<int>(sizeof...(Is));
+    if (argc != N) return false;
+    return (JsTypeMatcher<std::decay_t<std::tuple_element_t<Is, ArgsTuple>>>
+                ::match(ctx, argv[Is]) && ...);
+}
+
+/// Implementation detail — filters out JSContext* params, then builds checker.
+template <typename ArgsTuple, size_t... Is>
+auto makeTypeCheckerImpl(std::index_sequence<Is...>) {
+    // Collect non-JSContext* param types into a new tuple for matching.
+    // We do it the simple way: just iterate argv indices and check
+    // the types that actually map to JS args.
+    return [](JSContext* ctx, int argc, JSValueConst* argv) -> bool {
+        // Build array of match-functions for JS-visible params only.
+        using MatchFn = bool(*)(JSContext*, JSValueConst);
+        constexpr size_t total = sizeof...(Is);
+        // Determine which indices map to JS args (not JSContext*).
+        MatchFn matchers[total > 0 ? total : 1] = {};
+        int jsCount = 0;
+        // Fold expression to fill matchers array.
+        ((void)(is_jscontext_ptr_v<std::tuple_element_t<Is, ArgsTuple>>
+            ? 0
+            : (matchers[jsCount++] =
+                   &JsTypeMatcher<std::decay_t<std::tuple_element_t<Is, ArgsTuple>>>::match, 0)
+        ), ...);
+        if (argc != jsCount) return false;
+        for (int i = 0; i < jsCount; ++i) {
+            if (!matchers[i](ctx, argv[i])) return false;
+        }
+        return true;
+    };
+}
+
+/// Generate a type_check function pointer for a given ArgsTuple.
+/// JSContext* params in ArgsTuple are skipped (they don't consume an argv slot).
+template <typename ArgsTuple>
+auto makeTypeChecker() {
+    using Seq = std::make_index_sequence<std::tuple_size_v<ArgsTuple>>;
+    return makeTypeCheckerImpl<ArgsTuple>(Seq{});
+}
+
+} // namespace detail
+
 /**
  * @brief A single entry in the overload table.
  *
  * Each entry stores a wrapped JSCClosure callback, expected parameter count,
- * and an optional "try-match" function that returns true if the given JS
- * arguments are compatible with this overload.
+ * and a type_check function that returns true when the JS arguments are
+ * compatible with this overload's C++ parameter types.
  */
 struct OverloadEntry {
     /// The actual wrapped function (a JSCClosure callback).
@@ -509,14 +663,17 @@ struct OverloadEntry {
     void (*data_dtor)(void*);
     /// Expected number of JS arguments (-1 = any).
     int expected_argc;
+    /// Type-level argument matcher (nullptr = no type check, argc-only).
+    bool (*type_check)(JSContext* ctx, int argc, JSValueConst* argv);
 };
 
 /**
  * @brief Overload dispatch table stored in a JSCClosure opaque.
  *
- * When the JS function is called, the dispatcher iterates through entries
- * and invokes the first one whose expected_argc matches (or the first
- * with expected_argc == -1). If none match, a TypeError is thrown.
+ * Dispatch order:
+ *  1. Entries with type_check: argc AND type match.
+ *  2. Entries without type_check: argc match only.
+ *  3. Entries with expected_argc == -1 (variadic catch-all).
  */
 struct OverloadTable {
     std::vector<OverloadEntry> entries;
@@ -537,8 +694,24 @@ inline JSValue overloadDispatcher(JSContext* ctx, JSValueConst this_val,
                                   int argc, JSValueConst* argv,
                                   int /*magic*/, void* opaque) {
     auto* table = static_cast<OverloadTable*>(opaque);
+
+    // Pass 1: exact match — argc AND type_check both satisfied.
     for (auto& entry : table->entries) {
-        if (entry.expected_argc == -1 || entry.expected_argc == argc) {
+        if (entry.type_check && entry.type_check(ctx, argc, argv)) {
+            return entry.invoke(ctx, this_val, argc, argv, entry.data);
+        }
+    }
+    // Pass 2: argc-only match (entries without type_check).
+    for (auto& entry : table->entries) {
+        if (!entry.type_check &&
+            entry.expected_argc != -1 &&
+            entry.expected_argc == argc) {
+            return entry.invoke(ctx, this_val, argc, argv, entry.data);
+        }
+    }
+    // Pass 3: variadic catch-all (expected_argc == -1).
+    for (auto& entry : table->entries) {
+        if (entry.expected_argc == -1) {
             return entry.invoke(ctx, this_val, argc, argv, entry.data);
         }
     }
@@ -563,6 +736,7 @@ OverloadEntry makeFreeFunctionEntry(F&& fn) {
     entry.expected_argc = static_cast<int>(Traits::arity);
     entry.data = storage;
     entry.data_dtor = &CallableStorage<std::decay_t<F>>::release;
+    entry.type_check = makeTypeChecker<ArgsTuple>();
     entry.invoke = [](JSContext* ctx, JSValueConst /*this_val*/,
                       int argc, JSValueConst* argv, void* data) -> JSValue {
         auto* s = static_cast<CallableStorage<std::decay_t<F>>*>(data);
@@ -592,6 +766,7 @@ OverloadEntry makeMemberFunctionEntry(MemFn fn) {
     entry.expected_argc = static_cast<int>(Traits::arity);
     entry.data = storage;
     entry.data_dtor = &CallableStorage<std::decay_t<MemFn>>::release;
+    entry.type_check = makeTypeChecker<ArgsTuple>();
     entry.invoke = [](JSContext* ctx, JSValueConst this_val,
                       int argc, JSValueConst* argv, void* data) -> JSValue {
         T* self = getThisPointer<T>(ctx, this_val);
@@ -625,6 +800,7 @@ OverloadEntry makeThisCallableEntry(F&& fn) {
     entry.expected_argc = static_cast<int>(std::tuple_size_v<RestTuple>);
     entry.data = storage;
     entry.data_dtor = &CallableStorage<std::decay_t<F>>::release;
+    entry.type_check = makeTypeChecker<RestTuple>();
     entry.invoke = [](JSContext* ctx, JSValueConst this_val,
                       int argc, JSValueConst* argv, void* data) -> JSValue {
         T* self = getThisPointer<T>(ctx, this_val);

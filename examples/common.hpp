@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <qjsbind/qjsbind.hpp>
 
 #include <cmath>
@@ -72,6 +73,7 @@ public:
 
     Color getColor() const { return color_; }
     void setColor(Color c) { color_ = c; }
+    void setColor(std::string c) { color_ = Color::Red; /* Dummy */ }
 
 private:
     Color color_;

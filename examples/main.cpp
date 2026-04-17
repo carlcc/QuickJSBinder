@@ -65,7 +65,9 @@ int main(int argc, char* argv[]) {
         binder
             .constructor<void(double, double, Color)>()
             .method("getColor", &ColorPoint::getColor)
-            .method("setColor", &ColorPoint::setColor)
+            .method("setColor",
+                static_cast<void(ColorPoint::*)(Color)>(&ColorPoint::setColor),
+                static_cast<void(ColorPoint::*)(std::string)>(&ColorPoint::setColor))
             .enum_value("Red", Color::Red)
             .enum_value("Green", Color::Green)
             .enum_value("Blue", Color::Blue)

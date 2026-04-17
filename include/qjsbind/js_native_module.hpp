@@ -131,6 +131,79 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // Enum export
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Export a single enum constant as a named export.
+     *
+     * @code
+     * mod.enum_value("RED", Color::Red);
+     * @endcode
+     *
+     * @tparam EnumT Enum type.
+     * @param name Export name.
+     * @param value The enum value.
+     */
+    template <typename EnumT>
+    NativeModuleExport& enum_value(const char* name, EnumT value) {
+        if (dry_run_) {
+            export_names_.push_back(name);
+        } else {
+            JSValue jsVal = JsConverter<EnumT>::toJs(ctx_, value);
+            JS_SetModuleExport(ctx_, m_, name, jsVal);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Export an enum type as an object containing all given entries.
+     *
+     * The exported object is frozen (immutable). Each entry becomes a
+     * property whose value is the underlying integer.
+     *
+     * @code
+     * mod.enum_<Color>("Color", {
+     *     {"RED",   Color::Red},
+     *     {"GREEN", Color::Green},
+     *     {"BLUE",  Color::Blue},
+     * });
+     * // JS: import { Color } from 'mymod';
+     * //     Color.RED === 0
+     * @endcode
+     *
+     * @tparam EnumT Enum type.
+     * @param name Export name for the enum object.
+     * @param entries Pairs of (name, value).
+     */
+    template <typename EnumT>
+    NativeModuleExport& enum_(const char* name,
+                              std::initializer_list<std::pair<const char*, EnumT>> entries) {
+        if (dry_run_) {
+            export_names_.push_back(name);
+        } else {
+            JSValue obj = JS_NewObject(ctx_);
+            for (auto& [k, v] : entries) {
+                JS_DefinePropertyValueStr(
+                    ctx_, obj, k, JsConverter<EnumT>::toJs(ctx_, v),
+                    JS_PROP_ENUMERABLE);
+            }
+            // Freeze the enum object to prevent mutation.
+            JSValue global = JS_GetGlobalObject(ctx_);
+            JSValue objectCtor = JS_GetPropertyStr(ctx_, global, "Object");
+            JSValue freezeFn = JS_GetPropertyStr(ctx_, objectCtor, "freeze");
+            JSValue argv[] = {obj};
+            JSValue frozen = JS_Call(ctx_, freezeFn, objectCtor, 1, argv);
+            JS_FreeValue(ctx_, frozen);
+            JS_FreeValue(ctx_, freezeFn);
+            JS_FreeValue(ctx_, objectCtor);
+            JS_FreeValue(ctx_, global);
+            JS_SetModuleExport(ctx_, m_, name, obj);
+        }
+        return *this;
+    }
+
+    // -----------------------------------------------------------------------
     // Class export
     // -----------------------------------------------------------------------
 

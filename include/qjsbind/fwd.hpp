@@ -23,7 +23,10 @@ class JsValue;
 // RAII wrapper for QuickJS JSRuntime*.
 class JsRuntime;
 
-// RAII wrapper for QuickJS JSContext*.
+// Non-owning view wrapper for QuickJS JSContext*.
+class JsContextView;
+
+// RAII owning wrapper for QuickJS JSContext*.
 class JsContext;
 
 // Lazy property proxy for intuitive JS object manipulation.

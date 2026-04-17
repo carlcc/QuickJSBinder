@@ -13,6 +13,7 @@
  */
 
 #include "common.hpp"
+#include <string>
 
 int main(int argc, char* argv[]) {
     JsRuntime rt;
@@ -62,7 +63,7 @@ int main(int argc, char* argv[]) {
         binder
             .constructor<void(double, double, Color)>()
             .method("getColor", &ColorPoint::getColor)
-            .method("setColor", &ColorPoint::setColor)
+            .method("setColor", (void(ColorPoint::*)(Color))&ColorPoint::setColor, (void(ColorPoint::*)(std::string))&ColorPoint::setColor)
             .enum_value("Red", Color::Red)
             .enum_value("Green", Color::Green)
             .enum_value("Blue", Color::Blue)

@@ -292,8 +292,54 @@ struct JsConverter<std::function<R(Args...)>> {
         };
     }
 
-    // toJs for std::function is more complex (requires closure creation).
-    // This is handled in function_wrapper.hpp.
+    /**
+     * @brief Convert a C++ std::function to a JS function (closure).
+     *
+     * Allocates a copy of the std::function on the heap and wraps it in a
+     * JS_NewCClosure so that calling the resulting JSValue from JS will
+     * invoke the stored C++ callable with automatic argument conversion.
+     */
+    static JSValue toJs(JSContext* ctx, const std::function<R(Args...)>& fn) {
+        if (!fn) {
+            return JS_UNDEFINED;
+        }
+        // Wrap the std::function in a shared_ptr stored as opaque pointer.
+        auto* stored = new std::function<R(Args...)>(fn);
+        constexpr int arity = static_cast<int>(sizeof...(Args));
+
+        return JS_NewCClosure(
+            ctx,
+            [](JSContext* ctx, JSValueConst /*this_val*/, int argc,
+               JSValueConst* argv, int /*magic*/, void* opaque) -> JSValue {
+                auto* f = static_cast<std::function<R(Args...)>*>(opaque);
+                // Convert JS arguments to C++ types via index expansion.
+                return invoke_impl(ctx, *f, argv, argc,
+                                   std::index_sequence_for<Args...>{});
+            },
+            "std_function",
+            [](void* opaque) {
+                delete static_cast<std::function<R(Args...)>*>(opaque);
+            },
+            arity, 0, stored);
+    }
+
+private:
+    template <size_t... I>
+    static JSValue invoke_impl(JSContext* ctx,
+                               const std::function<R(Args...)>& fn,
+                               JSValueConst* argv, int argc,
+                               std::index_sequence<I...>) {
+        // Suppress unused-parameter warnings when Args is empty.
+        (void)argv;
+        (void)argc;
+        if constexpr (std::is_void_v<R>) {
+            fn(JsConverter<std::decay_t<Args>>::fromJs(ctx, argv[I])...);
+            return JS_UNDEFINED;
+        } else {
+            R result = fn(JsConverter<std::decay_t<Args>>::fromJs(ctx, argv[I])...);
+            return JsConverter<std::decay_t<R>>::toJs(ctx, result);
+        }
+    }
 };
 
 // ============================================================================
@@ -457,5 +503,15 @@ struct JsConverter<T, std::enable_if_t<std::is_enum_v<T>>> {
         return static_cast<T>(JsConverter<Underlying>::fromJs(ctx, value));
     }
 };
+
+template <typename T>
+JSValue toJs(JSContext* ctx, T val) {
+    return JsConverter<T>::toJs(ctx, std::forward<T>(val));
+}
+
+template <typename T>
+T fromJs(JSContext* ctx, JSValueConst value) {
+    return JsConverter<T>::fromJs(ctx, value);
+}
 
 } // namespace qjsbind

@@ -269,7 +269,7 @@ public:
     template <typename T>
     static PointerData* makeBorrowed(T* ptr) {
         auto* pd = new PointerData();
-        pd->ptr = static_cast<void*>(ptr);
+        pd->ptr = (void*)(ptr);
         pd->owned = false;
         pd->destructor = nullptr;
         return pd;

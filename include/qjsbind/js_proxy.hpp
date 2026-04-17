@@ -210,7 +210,12 @@ public:
      * @return A JsProxy wrapping the function's return value.
      */
     template <typename... Args>
-    [[nodiscard]] JsProxy operator()(Args&&... args) const {
+    JsProxy operator()(Args&&... args) const {
+        return callWithThis(JS_UNDEFINED, std::forward<Args>(args)...);
+    }
+
+    template <typename... Args>
+    JsProxy callWithThis(JSValue this_, Args&&... args) const {
         JsValue fn = resolve();
         constexpr size_t N = sizeof...(Args);
         JSValue argv[N > 0 ? N : 1];
@@ -220,7 +225,7 @@ public:
             ((argv[i++] = JsConverter<std::decay_t<Args>>::toJs(ctx_, std::forward<Args>(args))), ...);
         }
 
-        JSValue result = JS_Call(ctx_, fn.value(), JS_UNDEFINED,
+        JSValue result = JS_Call(ctx_, fn.value(), this_,
                                  static_cast<int>(N), argv);
 
         // Free argument JSValues.
@@ -369,19 +374,13 @@ private:
 // Since JsContext is defined in js_context.hpp, we extend it here.
 
 /**
- * @brief Create a proxy for accessing global properties of a JsContext.
+ * @brief Create a proxy for accessing global properties of a JsContextView.
  *
- * This enables the sol2-like syntax:
- * @code
- * auto proxy = jsContextProxy(ctx, "math");
- * proxy["add"] = [](double a, double b) { return a + b; };
- * @endcode
- *
- * @param ctx The JsContext.
+ * @param ctx The JsContextView (or JsContext).
  * @param key The global property name.
  * @return A JsProxy for the global property.
  */
-inline JsProxy jsContextProxy(JsContext& ctx, const char* key) {
+inline JsProxy jsContextProxy(JsContextView& ctx, const char* key) {
     JsValue global = ctx.globalObject();
     JsProxy root(ctx.get(), std::move(global));
     return root[key];
@@ -390,20 +389,20 @@ inline JsProxy jsContextProxy(JsContext& ctx, const char* key) {
 } // namespace qjsbind
 
 // ============================================================================
-// Deferred inline definition: JsContext::operator[]
+// Deferred inline definition: JsContextView::operator[]
 // ============================================================================
 
-inline qjsbind::JsProxy qjsbind::JsContext::operator[](const char* key) {
+inline qjsbind::JsProxy qjsbind::JsContextView::operator[](const char* key) {
     JsValue global = globalObject();
     JsProxy root(ctx_, std::move(global));
     return root[key];
 }
 
 // ============================================================================
-// Deferred inline definition: JsContext::module()
+// Deferred inline definition: JsContextView::module()
 // ============================================================================
 
-inline qjsbind::JsProxy qjsbind::JsContext::module(const char* name) {
+inline qjsbind::JsProxy qjsbind::JsContextView::module(const char* name) {
     JsValue mod = getModule(name);
     return JsProxy(ctx_, std::move(mod));
 }

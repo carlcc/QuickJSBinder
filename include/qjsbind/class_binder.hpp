@@ -217,6 +217,11 @@ public:
         if (!installed_) {
             JS_FreeValue(ctx_, proto_);
             delete ctor_table_;
+            for (auto& sp : static_props_) {
+                JS_FreeValue(ctx_, sp.getter);
+                if (!JS_IsUndefined(sp.setter))
+                    JS_FreeValue(ctx_, sp.setter);
+            }
         }
     }
 
@@ -457,8 +462,87 @@ public:
      */
     template <typename M, std::enable_if_t<!std::is_function_v<M>, int> = 0>
     ClassBinder& property_readonly(const char* name, M T::* mp) {
-        auto getter = [mp](const T& self) -> const M& { return self.*mp; };
+        auto getter = [mp](const T& self) -> std::reference_wrapper<const M> { return self.*mp; };
         return property_readonly(name, std::move(getter));
+    }
+
+    // -----------------------------------------------------------------------
+    // Static property registration
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Register a read-write static property with getter and setter.
+     *
+     * Getter/setter are free functions or lambdas (no this parameter).
+     * The property is installed on the constructor object (e.g. `MyClass.prop`).
+     *
+     * @code
+     * binder.static_property("count",
+     *     []() -> int { return MyClass::count; },
+     *     [](int v) { MyClass::count = v; });
+     * @endcode
+     */
+    template <typename Getter, typename Setter>
+    ClassBinder& static_property(const char* name, Getter&& getter, Setter&& setter) {
+        JSValue jsGetter = wrapFunction(ctx_, name, std::forward<Getter>(getter));
+        JSValue jsSetter = wrapFunction(ctx_, name, std::forward<Setter>(setter));
+        static_props_.push_back({name, jsGetter, jsSetter});
+        return *this;
+    }
+
+    /**
+     * @brief Register a read-only static property with getter.
+     *
+     * @code
+     * binder.static_property_readonly("version",
+     *     []() -> std::string { return "1.0"; });
+     * @endcode
+     */
+    template <typename Getter>
+    ClassBinder& static_property_readonly(const char* name, Getter&& getter) {
+        JSValue jsGetter = wrapFunction(ctx_, name, std::forward<Getter>(getter));
+        static_props_.push_back({name, jsGetter, JS_UNDEFINED});
+        return *this;
+    }
+
+    /**
+     * @brief Register a read-write static property bound to a native pointer.
+     *
+     * JS and C++ share the same memory — reads/writes go through the pointer
+     * directly. No copy is made.
+     *
+     * @code
+     * static int g_counter = 0;
+     * binder.static_property("counter", &g_counter);
+     * @endcode
+     *
+     * @tparam V Value type (deduced from the pointer).
+     * @param name JS property name.
+     * @param ptr Pointer to the native variable (must outlive the JS context).
+     */
+    template <typename V>
+    ClassBinder& static_property(const char* name, V* ptr) {
+        auto getter = [ptr]() -> const V& { return *ptr; };
+        auto setter = [ptr](const V& val) { *ptr = val; };
+        return static_property(name, std::move(getter), std::move(setter));
+    }
+
+    /**
+     * @brief Register a read-only static property bound to a native pointer.
+     *
+     * @code
+     * static const std::string kVersion = "2.0";
+     * binder.static_property_readonly("version", &kVersion);
+     * @endcode
+     *
+     * @tparam V Value type (deduced from the pointer).
+     * @param name JS property name.
+     * @param ptr Pointer to the native variable (must outlive the JS context).
+     */
+    template <typename V>
+    ClassBinder& static_property_readonly(const char* name, const V* ptr) {
+        auto getter = [ptr]() -> const V& { return *ptr; };
+        return static_property_readonly(name, std::move(getter));
     }
 
     // -----------------------------------------------------------------------
@@ -613,6 +697,15 @@ private:
         }
         enum_values_.clear();
 
+        // Install static properties (getter/setter) on the constructor.
+        for (auto& sp : static_props_) {
+            JSAtom atom = JS_NewAtom(ctx_, sp.name.c_str());
+            JS_DefinePropertyGetSet(ctx_, ctorFunc, atom, sp.getter, sp.setter,
+                                    JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+            JS_FreeAtom(ctx_, atom);
+        }
+        static_props_.clear();
+
         // Free the prototype (ClassBinder's reference; JS_SetClassProto kept a dup).
         JS_FreeValue(ctx_, proto_);
         proto_ = JS_UNDEFINED;
@@ -634,6 +727,14 @@ private:
 
     // Deferred enum values: name -> JSValue.
     std::vector<std::pair<std::string, JSValue>> enum_values_;
+
+    // Deferred static properties: name, getter JSValue, setter JSValue (JS_UNDEFINED if readonly).
+    struct StaticPropEntry {
+        std::string name;
+        JSValue getter;
+        JSValue setter;  // JS_UNDEFINED for readonly
+    };
+    std::vector<StaticPropEntry> static_props_;
 
     // --- Constructor closure data ---
 
