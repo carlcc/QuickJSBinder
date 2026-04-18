@@ -60,6 +60,114 @@ struct JsConverter {
 };
 
 // ============================================================================
+// Default pointer/reference conversions for ClassBinder-registered types
+// ============================================================================
+template <typename T>
+struct JsConverter<T*> {
+    static JSValue toJs(JSContext* ctx, T* ptr)
+    {
+        if (!ptr)
+            return JS_NULL;
+        JSClassID cid = ClassRegistry::classId<T>();
+        JSValue proto = JS_GetClassProto(ctx, cid);
+        JSValue obj = JS_NewObjectProtoClass(ctx, proto, cid);
+        JS_FreeValue(ctx, proto);
+        auto* pd = ClassRegistry::makeBorrowed<T>(ptr);
+        JS_SetOpaque(obj, pd);
+        return obj;
+    }
+    static T* fromJs(JSContext* ctx, JSValueConst val)
+    {
+        JSClassID cid = ClassRegistry::classId<T>();
+        auto* pd = static_cast<PointerData*>(JS_GetOpaque2(ctx, val, cid));
+        return pd ? pd->get<T>(ctx) : nullptr;
+    }
+};
+
+template <typename T>
+struct JsConverter<const T*> {
+    static JSValue toJs(JSContext* ctx, const T* ptr)
+    {
+        return ptr == nullptr ? JS_NULL : JsConverter<T*>::toJs(ctx, const_cast<T*>(ptr));
+    }
+    static const T* fromJs(JSContext* ctx, JSValueConst val)
+    {
+        return JsConverter<T*>::fromJs(ctx, val);
+    }
+};
+template <typename T>
+struct JsConverter<T&> {
+    static JSValue toJs(JSContext* ctx, T& ref)
+    {
+        return JsConverter<T*>::toJs(ctx, &ref);
+    }
+    static T& fromJs(JSContext* ctx, JSValueConst val)
+    {
+        T* ptr = JsConverter<T*>::fromJs(ctx, val);
+        assert(ptr && "fromJs<T&>: null native object");
+        return *ptr;
+    }
+};
+template <typename T>
+struct JsConverter<const T&> {
+    static JSValue toJs(JSContext* ctx, const T& ref)
+    {
+        return JsConverter<T*>::toJs(ctx, const_cast<T*>(&ref));
+    }
+    static const T& fromJs(JSContext* ctx, JSValueConst val)
+    {
+        return JsConverter<T&>::fromJs(ctx, val);
+    }
+};
+
+// ============================================================================
+// std::reference_wrapper<T> — shared reference semantics
+// ============================================================================
+
+/**
+ * @brief Specialization for std::reference_wrapper<T>.
+ *
+ * When a std::reference_wrapper<T> is converted to JS, the resulting JS object
+ * shares the same native C++ object as the original reference. Both sides see
+ * each other's modifications (shared/borrowed semantics).
+ *
+ * When converted from JS back to C++, it returns a std::reference_wrapper
+ * pointing to the same native T* stored in the JS object.
+ *
+ * @note T must be a ClassBinder-registered type with QJSBIND_DECLARE_CONVERTER.
+ *
+ * @code
+ * Point pt(3, 4);
+ * std::reference_wrapper<Point> ref = std::ref(pt);
+ * // toJs: creates a JS object sharing the same Point (borrowed, not copied)
+ * JSValue jsRef = JsConverter<std::reference_wrapper<Point>>::toJs(ctx, ref);
+ * // Modifications via JS are visible in pt, and vice versa.
+ * @endcode
+ */
+template <typename T>
+struct JsConverter<std::reference_wrapper<T>> {
+    static JSValue toJs(JSContext* ctx, std::reference_wrapper<T> ref)
+    {
+        T* ptr = &ref.get();
+        JSClassID cid = ClassRegistry::classId<T>();
+        JSValue proto = JS_GetClassProto(ctx, cid);
+        JSValue obj = JS_NewObjectProtoClass(ctx, proto, cid);
+        JS_FreeValue(ctx, proto);
+        auto* pd = ClassRegistry::makeBorrowed<T>(ptr);
+        JS_SetOpaque(obj, pd);
+        return obj;
+    }
+    static std::reference_wrapper<T> fromJs(JSContext* ctx, JSValueConst val)
+    {
+        JSClassID cid = ClassRegistry::classId<T>();
+        auto* pd = static_cast<PointerData*>(JS_GetOpaque2(ctx, val, cid));
+        T* ptr = pd ? pd->get<T>(ctx) : nullptr;
+        assert(ptr && "fromJs<std::reference_wrapper<T>>: null native object");
+        return std::ref(*ptr);
+    }
+};
+
+// ============================================================================
 // bool
 // ============================================================================
 
@@ -416,51 +524,6 @@ struct JsConverter<T, std::enable_if_t<
         } else {
             return static_cast<T>(JsConverter<double>::fromJs(ctx, value));
         }
-    }
-};
-
-// ============================================================================
-// std::reference_wrapper<T> — shared reference semantics
-// ============================================================================
-
-/**
- * @brief Specialization for std::reference_wrapper<T>.
- *
- * When a std::reference_wrapper<T> is converted to JS, the resulting JS object
- * shares the same native C++ object as the original reference. Both sides see
- * each other's modifications (shared/borrowed semantics).
- *
- * When converted from JS back to C++, it returns a std::reference_wrapper
- * pointing to the same native T* stored in the JS object.
- *
- * @note T must be a ClassBinder-registered type with QJSBIND_DECLARE_CONVERTER.
- *
- * @code
- * Point pt(3, 4);
- * std::reference_wrapper<Point> ref = std::ref(pt);
- * // toJs: creates a JS object sharing the same Point (borrowed, not copied)
- * JSValue jsRef = JsConverter<std::reference_wrapper<Point>>::toJs(ctx, ref);
- * // Modifications via JS are visible in pt, and vice versa.
- * @endcode
- */
-template <typename T>
-struct JsConverter<std::reference_wrapper<T>> {
-    static JSValue toJs(JSContext* ctx, std::reference_wrapper<T> ref) {
-        T* ptr = &ref.get();
-        JSClassID cid = ClassRegistry::classId<T>();
-        JSValue proto = JS_GetClassProto(ctx, cid);
-        JSValue obj = JS_NewObjectProtoClass(ctx, proto, cid);
-        JS_FreeValue(ctx, proto);
-        auto* pd = ClassRegistry::makeBorrowed<T>(ptr);
-        JS_SetOpaque(obj, pd);
-        return obj;
-    }
-    static std::reference_wrapper<T> fromJs(JSContext* ctx, JSValueConst val) {
-        JSClassID cid = ClassRegistry::classId<T>();
-        auto* pd = static_cast<PointerData*>(JS_GetOpaque2(ctx, val, cid));
-        T* ptr = pd ? pd->get<T>(ctx) : nullptr;
-        assert(ptr && "fromJs<std::reference_wrapper<T>>: null native object");
-        return std::ref(*ptr);
     }
 };
 
