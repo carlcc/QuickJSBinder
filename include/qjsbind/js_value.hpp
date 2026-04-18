@@ -151,7 +151,9 @@ public:
     [[nodiscard]] JSValue value() const noexcept { return val_; }
 
     /** @brief Implicit conversion to JSValueConst for QuickJS API calls. */
-    operator JSValueConst() const noexcept { return val_; }
+    // Since using implicit conversion when returning a JsValue may lead Use After Free,
+    // we disable it.
+    // operator JSValueConst() const noexcept { return val_; }
 
     /** @brief Get the associated context. */
     [[nodiscard]] JSContext* context() const noexcept { return ctx_; }
