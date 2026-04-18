@@ -36,3 +36,5 @@
 #include "js_module.hpp"
 #include "js_native_module.hpp"
 #include "js_proxy.hpp"
+
+#include "wrappers/stl_container_wrappers.hpp"

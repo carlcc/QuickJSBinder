@@ -166,6 +166,17 @@ struct JsConverter<std::reference_wrapper<T>> {
         return std::ref(*ptr);
     }
 };
+template <typename T>
+struct JsConverter<std::reference_wrapper<const T>> {
+    static JSValue toJs(JSContext* ctx, std::reference_wrapper<const T> ref)
+    {
+        return JsConverter<std::reference_wrapper<T>>::toJs(ctx, (T&)(const T&)ref);
+    }
+    static std::reference_wrapper<T> fromJs(JSContext* ctx, JSValueConst val)
+    {
+        return JsConverter<std::reference_wrapper<T>>::fromJs(ctx, (T&)(const T&)val);
+    }
+};
 
 // ============================================================================
 // bool
@@ -576,5 +587,7 @@ template <typename T>
 T fromJs(JSContext* ctx, JSValueConst value) {
     return JsConverter<T>::fromJs(ctx, value);
 }
+
+// TODO: Register basic types' reference wrapper classes, so that basic types can be passed by reference and be used in both C++ and JS.
 
 } // namespace qjsbind

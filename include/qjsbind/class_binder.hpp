@@ -444,9 +444,20 @@ public:
      */
     template <typename M, std::enable_if_t<!std::is_function_v<M>, int> = 0>
     ClassBinder& property(const char* name, M T::* mp) {
-        auto getter = [mp](const T& self) -> const M& { return self.*mp; };
-        auto setter = [mp](T& self, const M& val) { self.*mp = val; };
-        return property(name, std::move(getter), std::move(setter));
+        using DecayT = std::decay_t<M>;
+        if constexpr (std::is_arithmetic_v<DecayT> || std::is_same_v<DecayT, bool> || std::is_enum_v<DecayT>) {
+            auto getter = [mp](const T& self) -> M { return self.*mp; };
+            auto setter = [mp](T& self, M val) { self.*mp = val; };
+            return property_readonly(name, std::move(getter));
+        } else if constexpr (std::is_pointer_v<DecayT> || std::is_reference_v<DecayT>) {
+            auto getter = [mp](const T& self) -> M { return self.*mp; };
+            auto setter = [mp](T& self, M val) { self.*mp = val; };
+            return property_readonly(name, std::move(getter));
+        } else {
+            auto getter = [mp](const T& self) -> const M& { return self.*mp; };
+            auto setter = [mp](T& self, const M& val) { self.*mp = val; };
+            return property(name, std::move(getter), std::move(setter));
+        }
     }
 
     /**
@@ -464,8 +475,17 @@ public:
      */
     template <typename M, std::enable_if_t<!std::is_function_v<M>, int> = 0>
     ClassBinder& property_readonly(const char* name, M T::* mp) {
-        auto getter = [mp](const T& self) -> std::reference_wrapper<const M> { return self.*mp; };
-        return property_readonly(name, std::move(getter));
+        using DecayT = std::decay_t<M>;
+        if constexpr (std::is_arithmetic_v<DecayT> || std::is_same_v<DecayT, bool> || std::is_enum_v<DecayT>) {
+            auto getter = [mp](const T& self) -> M { return self.*mp; };
+            return property_readonly(name, std::move(getter));
+        } else if constexpr (std::is_pointer_v<DecayT> || std::is_reference_v<DecayT>) {
+            auto getter = [mp](const T& self) -> M { return self.*mp; };
+            return property_readonly(name, std::move(getter));
+        } else {
+            auto getter = [mp](const T& self) -> std::reference_wrapper<const M> { return self.*mp; };
+            return property_readonly(name, std::move(getter));
+        }
     }
 
     // -----------------------------------------------------------------------
