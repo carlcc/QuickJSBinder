@@ -58,6 +58,13 @@ public:
     /** @brief Implicit conversion to JSContext*. */
     operator JSContext*() const noexcept { return ctx_; }
 
+    /**
+     * should be called when changing thread to update the stack top valueused to check stack overflow.
+     */
+    void updateStackTop() const {
+        JS_UpdateStackTop(JS_GetRuntime(ctx_));
+    }
+
     // -----------------------------------------------------------------------
     // Eval
     // -----------------------------------------------------------------------

@@ -228,6 +228,8 @@ public:
     ClassBinder(const ClassBinder&) = delete;
     ClassBinder& operator=(const ClassBinder&) = delete;
 
+    JSContext* context() const { return ctx_; }
+
     // -----------------------------------------------------------------------
     // Constructor registration
     // -----------------------------------------------------------------------
