@@ -190,7 +190,7 @@ constexpr int jsContextCountTotal() {
 
 /// Convert the I-th parameter: JSContext* gets ctx; others get argv[adjusted_index].
 template <typename ArgsTuple, size_t I>
-auto convertArgAt(JSContext* ctx, JSValueConst* argv, int argc) {
+decltype(auto) convertArgAt(JSContext* ctx, JSValueConst* argv, int argc) {
     using ParamT = std::tuple_element_t<I, ArgsTuple>;
     if constexpr (is_jscontext_ptr_v<ParamT>) {
         return ctx;
@@ -226,7 +226,7 @@ auto applyImpl(F&& fn, Tuple&& args, std::index_sequence<Is...>)
 }
 
 template <typename F, typename Tuple>
-auto invokeWithTuple(F&& fn, Tuple&& args) {
+decltype(auto) invokeWithTuple(F&& fn, Tuple&& args) {
     constexpr size_t N = std::tuple_size_v<std::decay_t<Tuple>>;
     return applyImpl(std::forward<F>(fn), std::forward<Tuple>(args),
                      std::make_index_sequence<N>{});
@@ -241,7 +241,7 @@ auto applyMemberImpl(MemFn fn, Obj* obj, Tuple&& args, std::index_sequence<Is...
 }
 
 template <typename MemFn, typename Obj, typename Tuple>
-auto applyMember(MemFn fn, Obj* obj, Tuple&& args) {
+decltype(auto) applyMember(MemFn fn, Obj* obj, Tuple&& args) {
     constexpr size_t N = std::tuple_size_v<std::decay_t<Tuple>>;
     return applyMemberImpl(fn, obj, std::forward<Tuple>(args),
                            std::make_index_sequence<N>{});
