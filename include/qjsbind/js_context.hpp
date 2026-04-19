@@ -104,7 +104,7 @@ public:
     }
 
     [[nodiscard]] std::string getExceptionMessageStr() const {
-        return getExceptionMessage().toString();
+        return getExceptionMessage().toExceptionString();
     }
 
     /**
