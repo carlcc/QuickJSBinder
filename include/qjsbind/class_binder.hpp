@@ -448,11 +448,11 @@ public:
         if constexpr (std::is_arithmetic_v<DecayT> || std::is_same_v<DecayT, bool> || std::is_enum_v<DecayT>) {
             auto getter = [mp](const T& self) -> M { return self.*mp; };
             auto setter = [mp](T& self, M val) { self.*mp = val; };
-            return property_readonly(name, std::move(getter));
+            return property(name, std::move(getter), std::move(setter));
         } else if constexpr (std::is_pointer_v<DecayT> || std::is_reference_v<DecayT>) {
             auto getter = [mp](const T& self) -> M { return self.*mp; };
             auto setter = [mp](T& self, M val) { self.*mp = val; };
-            return property_readonly(name, std::move(getter));
+            return property(name, std::move(getter), std::move(setter));
         } else {
             auto getter = [mp](const T& self) -> const M& { return self.*mp; };
             auto setter = [mp](T& self, const M& val) { self.*mp = val; };
